@@ -98,10 +98,3 @@ under `runs/` by default.  This directory is intentionally ignored by git.
 - `--pragma-dse-jobs <n>`: set pragma-DSE parallelism.
 - `--pragma-dse-candidate-timeout-sec <seconds>`: set per-candidate Vitis HLS
   timeout; use `0` to disable the timeout.
-
-## Notes for Reviewers
-
-The repository does not include private API keys or local run outputs.  Reviewers
-who only want to inspect the example kernels can run the TCL files in
-`motivations/`.  Reviewers who want to reproduce the full agent workflow need
-Vitis HLS, CBMC, the Python dependencies above, and their own LLM API key.
