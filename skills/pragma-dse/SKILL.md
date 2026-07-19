@@ -1,6 +1,6 @@
 ---
 name: pragma-dse
-description: Search pragma configurations and evaluate QoR with Vitis HLS. Use after fuzzing passes and constraints are defined.
+description: Search pragma configurations and evaluate QoR with Vitis HLS. Use after C-sim verification passes and constraints are defined.
 ---
 # Pragma DSE + Vitis HLS
 
@@ -8,7 +8,7 @@ description: Search pragma configurations and evaluate QoR with Vitis HLS. Use a
 Use this skill after `pragma-tuning` to evaluate pragma candidates with real Vitis HLS synthesis and select the best QoR under target constraints.
 
 ## Prerequisites
-- Fuzzing test passed.
+- Original-C-versus-rewrite Vitis C-sim verification passed.
 - Target constraints are defined.
 
 ## Inputs

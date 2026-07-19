@@ -687,7 +687,7 @@ class Candidate:
 	stage: str
 	variant_kind: str
 	score: float
-	fuzz_pass: bool
+	verification_pass: bool
 	metrics: Dict[str, float]
 	notes: str
 
@@ -1998,7 +1998,7 @@ class Agent:
 		]
 		software_failures: List[Dict[str, Any]] = []
 		for candidate in software_candidates:
-			if candidate.fuzz_pass:
+			if candidate.verification_pass:
 				continue
 			software_failures.append(
 				{
@@ -2883,72 +2883,92 @@ class Agent:
 		out["command_result"] = output
 		return out
 
-	def _run_direct_fuzzing(self, turn: int, log_file: str) -> Dict[str, Any]:
-		script_dir = os.path.join(self.skills_dir, "fuzzing", "scripts")
+	def _run_direct_csim_verification(self, turn: int, log_file: str, variant_kind: str) -> Dict[str, Any]:
+		script_path = os.path.join(
+			self.skills_dir,
+			"csim-verification",
+			"scripts",
+			"run_csim_equiv.py",
+		)
 		run_dir = self.scratchpad.run_dir
 		version = f"v{turn}"
-		rc1, out1 = self._run_python_script(
-			os.path.join(script_dir, "gen_cbmc_harness.py"),
+		verification_dir = os.path.join(run_dir, "csim_verification", version)
+		report_path = os.path.join(verification_dir, "csim_equiv_report.json")
+		trials = max(1, int(self.config.get("csim_equiv_trials", 8)))
+		buf_size = max(1, int(self.config.get("csim_equiv_buf_size", 4096)))
+		seed = int(self.config.get("csim_equiv_seed", 1))
+		atol = float(self.config.get("csim_equiv_atol", 1e-5))
+		rtol = float(self.config.get("csim_equiv_rtol", 1e-5))
+		per_run_timeout = max(1, int(self.config.get("csim_equiv_timeout_sec", 300)))
+		if os.path.exists(report_path):
+			os.remove(report_path)
+		rc, command_result = self._run_python_script(
+			script_path,
 			[
 				self.scratchpad.optimized_code_file[turn],
 				self.scratchpad.optimized_code_file[0],
 				self.scratchpad.top_function_name,
-				run_dir,
-				version,
-			],
-			log_file,
-			f"cbmc-gen-{version}",
-			cwd=run_dir,
-			timeout=300,
-		)
-		rc2, out2 = self._run_python_script(
-			os.path.join(script_dir, "run_cbmc_equiv.py"),
-			[
-				"--run_dir",
-				run_dir,
+				"--part",
+				self.scratchpad.fpga,
+				"--clock-period",
+				self._clock_period_from_target_freq(),
+				"--work-dir",
+				verification_dir,
+				"--report",
+				report_path,
+				"--trials",
+				str(trials),
+				"--seed",
+				str(seed),
+				"--buf-size",
+				str(buf_size),
+				"--atol",
+				str(atol),
+				"--rtol",
+				str(rtol),
 				"--timeout",
-				"180",
-				"--unwind",
-				"2048",
-				"--version",
-				version,
+				str(per_run_timeout),
 			],
 			log_file,
-			f"cbmc-run-{version}",
+			f"csim-equiv-{version}",
 			cwd=run_dir,
-			timeout=240,
+			timeout=per_run_timeout * 2 + 120,
 		)
-		command_result = f"[gen_cbmc_rc]={rc1}\n{out1}\n[run_cbmc_rc]={rc2}\n{out2}"
-		output = {"command_result": command_result}
-		status = self._extract_fuzz_status(output)
-		fuzz_accepted = self._is_fuzz_accepted_status(status)
-		diagnostics = [] if status == "PASS" else self._extract_fuzz_failure_diagnostics(output)
-		analysis_lines = [f"CBMC equivalence checking completed for {version}. Result: {status}."]
-		if status == "TIMEOUT":
-			analysis_lines.append(
-				"CBMC proof timed out. Treat this as inconclusive but acceptable for pipeline progression; do not force another software rewrite solely because of this timeout."
-			)
-		elif status == "ABORTED":
-			analysis_lines.append(
-				"CBMC aborted before reaching a proof result. Treat this as inconclusive but acceptable for pipeline progression; only explicit FAIL should trigger another software rewrite."
-			)
-		if diagnostics:
-			analysis_lines.append("Key diagnostics:")
-			analysis_lines.extend(f"- {item}" for item in diagnostics)
-		output["analysis"] = "\n".join(analysis_lines)
-		output["status"] = status
-		output["failure_diagnostics"] = diagnostics
-		output["json_artifacts"] = [
-			{
-				"skill": "fuzzing",
-				"version": version,
-				"status": status,
-				"gen_cbmc_rc": rc1,
-				"run_cbmc_rc": rc2,
-				"success": fuzz_accepted,
-				"diagnostics": diagnostics,
-			}
-		]
+		report = self._load_json_file(report_path) if os.path.exists(report_path) else {}
+		status = str(report.get("status", "")).strip().upper() or self._extract_verification_status(
+			{"command_result": command_result}
+		)
+		if status not in {"PASS", "FAIL", "ERROR", "TIMEOUT"} or (rc != 0 and status == "PASS"):
+			status = "ERROR"
+		diagnostics = self._extract_verification_diagnostics(
+			{"command_result": command_result, "json_artifacts": [report] if report else []}
+		)
+		output = {
+			"analysis": (
+				f"AMD Vitis C-sim equivalence verification completed for {version} "
+				f"({variant_kind}). Result: {status}. Only PASS is accepted."
+				+ ("\nKey diagnostics:\n" + "\n".join(f"- {item}" for item in diagnostics) if diagnostics else "")
+			),
+			"command_result": f"[csim_command_rc]={rc}\n{command_result}",
+			"status": status,
+			"failure_diagnostics": diagnostics,
+			"json_artifacts": [
+				{
+					"skill": "csim-verification",
+					"version": version,
+					"variant_kind": variant_kind,
+					"status": status,
+					"success": status == "PASS",
+					"reason": str(report.get("reason", "")).strip(),
+					"mismatch": report.get("mismatch"),
+					"report_path": report_path if os.path.exists(report_path) else "",
+					"diagnostics": diagnostics,
+				}
+			],
+		}
+		artifact_key = f"{variant_kind}_csim_verification_report"
+		if os.path.exists(report_path):
+			self.scratchpad.stage_artifacts[artifact_key] = report_path
 		return output
 
 	def _run_direct_pragma_tuning(self, log_file: str) -> Dict[str, Any]:
@@ -3411,7 +3431,7 @@ class Agent:
 			metrics["timing_violation"] = 1.0
 		return metrics
 
-	def _is_fuzzable_cpp_design(self, code: str) -> bool:
+	def _is_plain_cpp_design(self, code: str) -> bool:
 		hls_only_patterns = (
 			r"#\s*pragma\s+HLS\b",
 			r"\bhls::stream\b",
@@ -3449,8 +3469,9 @@ class Agent:
 		raw = self._chat_with_history([
 			{
 				"role": "system",
-				"content": (
+					"content": (
 					"Convert the selected software-validated design into exactly one hardware-oriented HLS variant. "
+					"Preserve the top-function name, return type, parameter order, and parameter base types so the result remains interface-compatible with Original C. "
 					"You may use HLS-specific constructs such as interface pragmas, array partition/reshape pragmas, DATAFLOW, hls::stream, "
 					"ap_int/ap_uint, and interface annotations when justified. Emit the baseline HLS pragma combination directly in this "
 					"hardware rewrite, including PIPELINE, UNROLL, DATAFLOW, STREAM, and ARRAY_PARTITION/RESHAPE when justified. "
@@ -3523,6 +3544,21 @@ class Agent:
 				"metrics": {},
 				"validation_issues": validation_issues,
 			}
+		verification_output = self._run_direct_csim_verification(hardware_turn, log_file, "hardware")
+		verification_status = self._extract_verification_status(verification_output)
+		if verification_status != "PASS":
+			self.optimized_code_turn = base_turn
+			verification_summary = self._summarize_verification_failure_brief(verification_output)
+			return {
+				"hardware_turn": None,
+				"feedback": (
+					"Hardware rewrite did not pass AMD Vitis C-sim equivalence verification against Original C. "
+					"Revise the hardware design before pragma tuning/DSE. "
+					+ verification_summary
+				),
+				"metrics": {},
+				"validation_issues": list(verification_output.get("failure_diagnostics", []) or []),
+			}
 		metrics = self._extract_metrics_from_output_text(self._generate_llm_prompt(hardware_output))
 		if hardware_output.get("json_artifacts"):
 			metrics.update(self._extract_metrics_from_json_artifacts(hardware_output["json_artifacts"]))
@@ -3532,7 +3568,7 @@ class Agent:
 			parent_turn=base_turn,
 			stage="hardware_rewrite",
 			variant_kind="hardware",
-			fuzz_pass=False,
+			verification_pass=True,
 			metrics=metrics,
 			notes="Hardware-oriented rewrite for HLS-only optimization",
 		)
@@ -3553,7 +3589,7 @@ class Agent:
 		profiling_analysis: str,
 		rag_analysis: str,
 		rewrite_analysis: str,
-		fuzz_skill_name: str,
+		verification_skill_name: str,
 	) -> int:
 		max_attempts = max(1, int(self.config.get("max_opt_rounds", 5)))
 		baseline_turn = self.optimized_code_turn
@@ -3566,7 +3602,7 @@ class Agent:
 				parent_turn=baseline_turn,
 				stage="seed",
 				variant_kind="software",
-				fuzz_pass=True,
+				verification_pass=True,
 				metrics={},
 				notes="Baseline software design (assumed correct)",
 			)
@@ -3584,7 +3620,7 @@ class Agent:
 					"role": "system",
 					"content": (
 						"Based on the analysis and references, generate exactly one optimized software C/C++ variant "
-						"for CBMC-based software equivalence checking. The candidate must remain plain C/C++ and must not use any HLS-only constructs "
+						"for AMD Vitis C-sim equivalence checking. The candidate must remain plain C/C++ and must not use any HLS-only constructs "
 						"such as HLS pragmas, hls::stream, ap_int/ap_uint/ap_fixed, AXI/interface annotations, or "
 						"vendor-specific HLS headers/types. Return exactly one <optimized_code></optimized_code>, one "
 						"<analysis></analysis>, and optionally one <json>{\"estimated_latency\": number, "
@@ -3621,62 +3657,69 @@ class Agent:
 			candidate_turn = candidate_turns[-1]
 			self.optimized_code_turn = candidate_turn
 			last_failed_turn = candidate_turn
-			fuzz_pass = False
-			fuzz_output: Dict[str, Any] = {}
+			verification_pass = False
+			verification_status = "UNKNOWN"
+			verification_output: Dict[str, Any] = {}
 			candidate_code = self.scratchpad.optimized_code[candidate_turn]
-			if not self._is_fuzzable_cpp_design(candidate_code):
-				fuzz_notes = "Rejected: contains HLS-only constructs and is not fuzzable"
+			if not self._is_plain_cpp_design(candidate_code):
+				verification_notes = "Rejected: software rewrite contains HLS-only constructs"
 				last_feedback = (
 					"\n Validation Feedback \n"
-						"Candidate was rejected before CBMC equivalence checking because it introduced HLS-only constructs. "
+						"Candidate was rejected before Vitis C-sim equivalence checking because the software stage introduced HLS-only constructs. "
 					"Keep the next rewrite strictly plain C/C++."
 				)
-				_log_warn(f"Rejecting software candidate v{candidate_turn}: not fuzzable by g++")
-			elif fuzz_skill_name:
-				fuzz_notes = "FAIL"
-				_log_skill(f"Fuzzing candidate v{candidate_turn}")
-				fuzz_output = self._run_direct_fuzzing(candidate_turn, log_file)
-				fuzz_status = self._extract_fuzz_status(fuzz_output)
-				fuzz_pass = self._is_fuzz_accepted_status(fuzz_status)
-				fuzz_notes = "PASS" if fuzz_status == "PASS" else self._summarize_fuzz_failure_brief(fuzz_output)
-				_log_info(
-					f"Fuzz v{candidate_turn}: "
-					f"{_c(fuzz_notes, '1;32' if fuzz_status == 'PASS' else ('1;33' if fuzz_pass else '1;31'))}"
+				_log_warn(f"Rejecting software candidate v{candidate_turn}: HLS-only constructs are not allowed in this stage")
+			elif verification_skill_name:
+				verification_notes = "ERROR"
+				_log_skill(f"Vitis C-sim verification for software candidate v{candidate_turn}")
+				verification_output = self._run_direct_csim_verification(candidate_turn, log_file, "software")
+				verification_status = self._extract_verification_status(verification_output)
+				verification_pass = verification_status == "PASS"
+				verification_notes = (
+					"PASS"
+					if verification_pass
+					else self._summarize_verification_failure_brief(verification_output)
 				)
-				if fuzz_pass:
+				_log_info(
+					f"C-sim v{candidate_turn}: "
+					f"{_c(verification_notes, '1;32' if verification_pass else '1;31')}"
+				)
+				if verification_pass:
 					last_feedback = ""
 				else:
-					feedback_intro = "Previous software rewrite failed CBMC equivalence validation. Fix the specific issues below before proposing the next rewrite.\n"
+					feedback_intro = "Previous software rewrite did not pass AMD Vitis C-sim equivalence validation. Fix the specific mismatch or C-sim error below before proposing the next rewrite.\n"
 					last_feedback = (
 						"\n Validation Feedback \n"
 						+ feedback_intro
-						+ self._generate_llm_prompt(fuzz_output)
+						+ self._generate_llm_prompt(verification_output)
 					)
 			else:
-				fuzz_notes = "Fuzzing skill unavailable"
-				last_feedback = ""
+				verification_notes = "C-sim verification skill unavailable"
+				last_feedback = "\n Validation Feedback \nC-sim verification is required but unavailable.\n"
 
-			metrics = self._extract_metrics_from_output_text(self._generate_llm_prompt(fuzz_output if fuzz_skill_name else {}))
-			if fuzz_output.get("json_artifacts"):
-				metrics.update(self._extract_metrics_from_json_artifacts(fuzz_output["json_artifacts"]))
+			metrics = self._extract_metrics_from_output_text(
+				self._generate_llm_prompt(verification_output if verification_skill_name else {})
+			)
+			if verification_output.get("json_artifacts"):
+				metrics.update(self._extract_metrics_from_json_artifacts(verification_output["json_artifacts"]))
 			self._register_candidate(
 				turn=candidate_turn,
 				parent_turn=parent_turn,
 				stage=f"attempt_{attempt_idx}",
 				variant_kind="software",
-				fuzz_pass=fuzz_pass,
+				verification_pass=verification_pass,
 				metrics=metrics,
-				notes=fuzz_notes,
+				notes=verification_notes,
 			)
 
-			if fuzz_pass or not fuzz_skill_name:
+			if verification_pass:
 				self._append_text(
 					log_file,
-					f"[INFO] Selected software candidate: v{candidate_turn} fuzz_pass={fuzz_pass}\n",
+					f"[INFO] Selected software candidate: v{candidate_turn} csim_equivalence=PASS\n",
 				)
 				_log_info(
 					f"Selected software candidate: {_c(f'v{candidate_turn}', '1;37')} "
-					f"fuzz={'✅' if fuzz_status == 'PASS' else fuzz_status.lower()}"
+					f"csim={verification_status.lower()}"
 				)
 				return candidate_turn
 
@@ -3686,7 +3729,7 @@ class Agent:
 		if last_failed_turn is not None:
 			self._append_text(
 				log_file,
-				f"[WARN] No fuzz-passing software rewrite found after {max_attempts} attempts. "
+				f"[WARN] No C-sim-equivalent software rewrite found after {max_attempts} attempts. "
 				f"Falling back to baseline v{baseline_turn}; latest failed candidate was v{last_failed_turn}.\n",
 			)
 		else:
@@ -3697,12 +3740,12 @@ class Agent:
 		_log_warn(f"Falling back to baseline software candidate v{baseline_turn}")
 		return fallback_turn
 
-	def _score_candidate(self, metrics: Dict[str, float], fuzz_pass: bool, variant_kind: str = "software") -> float:
+	def _score_candidate(self, metrics: Dict[str, float], verification_pass: bool, variant_kind: str = "software") -> float:
 		# TODO: Replace this simple scalar score with a calibrated QoR model that
 		# balances latency, II, timing slack, and resource utilization explicitly.
 		score = 0.0
 		if variant_kind == "software":
-			score += 100.0 if fuzz_pass else -80.0
+			score += 100.0 if verification_pass else -80.0
 		score -= metrics.get("timing_violation", 0.0) * 30.0
 		score -= metrics.get("estimated_timing_violation", 0.0) * 25.0
 		score -= metrics.get("ii", 0.0) * 5.0
@@ -3716,11 +3759,11 @@ class Agent:
 		parent_turn: int,
 		stage: str,
 		variant_kind: str,
-		fuzz_pass: bool,
+		verification_pass: bool,
 		metrics: Dict[str, float],
 		notes: str,
 	) -> None:
-		score = self._score_candidate(metrics, fuzz_pass, variant_kind=variant_kind)
+		score = self._score_candidate(metrics, verification_pass, variant_kind=variant_kind)
 		self.candidates.append(
 			Candidate(
 				turn=turn,
@@ -3728,17 +3771,14 @@ class Agent:
 				stage=stage,
 				variant_kind=variant_kind,
 				score=score,
-				fuzz_pass=fuzz_pass,
+				verification_pass=verification_pass,
 				metrics=metrics,
 				notes=notes,
 			)
 		)
 
-	def _extract_fuzz_failure_diagnostics(self, output: Dict[str, Any], limit: int = 8) -> List[str]:
+	def _extract_verification_diagnostics(self, output: Dict[str, Any], limit: int = 8) -> List[str]:
 		text = str(output.get("command_result", "") or "")
-		if not text.strip():
-			return ["Fuzzing produced no command output."]
-
 		diagnostics: List[str] = []
 		seen: set[str] = set()
 
@@ -3749,42 +3789,32 @@ class Agent:
 			seen.add(message)
 			diagnostics.append(message)
 
-		for key, label in (("gen_cbmc_rc", "Harness generation"), ("run_cbmc_rc", "CBMC run")):
-			match = re.search(rf"\[{re.escape(key)}\]=(-?\d+)", text)
-			if not match:
+		for artifact in list(output.get("json_artifacts", []) or []):
+			if not isinstance(artifact, dict):
 				continue
-			try:
-				rc = int(match.group(1))
-			except (TypeError, ValueError):
-				continue
-			if rc != 0:
-				add(f"{label} command exited with code {rc}")
+			reason = str(artifact.get("reason", "")).strip()
+			if reason:
+				add(reason)
+			mismatch = artifact.get("mismatch")
+			if mismatch:
+				add(f"Mismatch: {json.dumps(mismatch, separators=(',', ':'))}")
 
-		status_match = re.search(r"\[cbmc_status\]=([A-Z_]+)", text)
-		if status_match:
-			status = status_match.group(1).strip().upper()
-			if status == "TIMEOUT":
-				add("CBMC timeout after 180s")
-		reason_match = re.search(r"\[cbmc_reason\]=(.*)", text)
+		reason_match = re.search(r"\[csim_reason\]=(.*)", text)
 		if reason_match:
 			add(reason_match.group(1).strip())
+		mismatch_match = re.search(r"\[csim_mismatch\]=(.*)", text)
+		if mismatch_match:
+			add(f"Mismatch: {mismatch_match.group(1).strip()}")
 
 		markers = (
-			"verification failed",
-			"violated property",
-			"mismatch detected",
-			"cbmc timeout",
-			"addresssanitizer",
-			"deadlysignal",
-			"segmentation fault",
+			"output mismatch",
+			"trace length mismatch",
+			"trace schema mismatch",
+			"c-sim failed",
+			"csim failed",
+			"timed out",
 			"fatal error:",
 			"error:",
-			"parse error",
-			"syntax error",
-			"undefined reference",
-			"undeclared identifier",
-			"no matching function",
-			"assertion",
 		)
 		for raw_line in text.splitlines():
 			line = raw_line.strip()
@@ -3798,67 +3828,34 @@ class Agent:
 				if len(diagnostics) >= limit:
 					break
 
-		if not diagnostics:
-			tail: List[str] = []
-			for raw_line in reversed(text.splitlines()):
-				line = raw_line.strip()
-				if not line:
-					continue
-				lower = line.lower()
-				if lower.startswith("running cbmc:") or lower.startswith("timeout:") or lower.startswith("strict safety checks:"):
-					continue
-				tail.append(line)
-				if len(tail) >= min(limit, 6):
-					break
-			for line in reversed(tail):
-				add(line)
-				if len(diagnostics) >= limit:
-					break
-
 		return diagnostics[:limit]
 
-	def _extract_fuzz_status(self, output: Dict[str, Any]) -> str:
+	def _extract_verification_status(self, output: Dict[str, Any]) -> str:
 		for artifact in list(output.get("json_artifacts", []) or []):
 			status = str(artifact.get("status", "")).strip().upper()
-			if status in {"PASS", "FAIL", "TIMEOUT", "ABORTED"}:
+			if status in {"PASS", "FAIL", "ERROR", "TIMEOUT"}:
 				return status
 
 		text = str(output.get("command_result", "") or "")
-		match = re.search(r"\[cbmc_status\]=([A-Z_]+)", text)
+		match = re.search(r"\[csim_status\]=([A-Z_]+)", text)
 		if match:
 			status = match.group(1).strip().upper()
-			if status in {"PASS", "FAIL", "TIMEOUT", "ABORTED"}:
+			if status in {"PASS", "FAIL", "ERROR", "TIMEOUT"}:
 				return status
-
-		lower = text.lower()
-		if "verification successful" in lower:
-			return "PASS"
-		if "verification failed" in lower:
-			return "FAIL"
-		if "cbmc timeout" in lower:
-			return "TIMEOUT"
-		if "cbmc aborted" in lower or "terminated by signal" in lower:
-			return "ABORTED"
 		return "UNKNOWN"
 
-	def _summarize_fuzz_failure_brief(self, output: Dict[str, Any], limit: int = 2) -> str:
-		status = self._extract_fuzz_status(output)
+	def _summarize_verification_failure_brief(self, output: Dict[str, Any], limit: int = 2) -> str:
+		status = self._extract_verification_status(output)
 		diagnostics = list(output.get("failure_diagnostics", []) or [])
 		if not diagnostics:
-			diagnostics = self._extract_fuzz_failure_diagnostics(output, limit=max(limit, 4))
+			diagnostics = self._extract_verification_diagnostics(output, limit=max(limit, 4))
 		if not diagnostics:
-			return status if status in {"FAIL", "TIMEOUT", "ABORTED"} else "FAIL"
+			return status if status in {"FAIL", "ERROR", "TIMEOUT"} else "ERROR"
 		summary = "; ".join(diagnostics[:limit])
 		if len(summary) > 220:
 			summary = summary[:217] + "..."
-		prefix = status if status in {"FAIL", "TIMEOUT", "ABORTED"} else "FAIL"
+		prefix = status if status in {"FAIL", "ERROR", "TIMEOUT"} else "ERROR"
 		return f"{prefix}: {summary}"
-
-	def _is_fuzz_accepted_status(self, status: str) -> bool:
-		return status in {"PASS", "TIMEOUT", "ABORTED"}
-
-	def _is_fuzz_pass(self, output: Dict[str, Any]) -> bool:
-		return self._is_fuzz_accepted_status(self._extract_fuzz_status(output))
 
 	def _build_info_prompt_from_scratchpad(self) -> str:
 		current_code = ""

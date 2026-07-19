@@ -7,8 +7,8 @@ description: Apply selected strategies to rewrite HLS source code. Use when you 
 
 ## When to use this skill
 Use this skill to guide two rewrite stages:
-- software rewrite: plain C/C++ only, intended for CBMC/g++ validation
-- hardware rewrite: HLS-oriented rewrite after software validation; emit the baseline HLS pragma structure so later `pragma-tuning` / `pragma-dse` only tune parameters
+- software rewrite: plain C/C++ only, validated against Original C with AMD Vitis HLS C-sim
+- hardware rewrite: HLS-oriented rewrite after software validation, followed by the same Original-C-versus-rewrite C-sim check; emit the baseline HLS pragma structure so later `pragma-tuning` / `pragma-dse` only tune parameters
 
 If later hardware validation / pragma-tuning / pragma-dse reports structural HLS errors, revise the hardware rewrite instead of forcing more pragmas onto a broken base design.
 
@@ -66,6 +66,7 @@ If later hardware validation / pragma-tuning / pragma-dse reports structural HLS
 
 ## Failure handling
 - Compile failure or syntax errors: roll back and record the failure reason.
+- C-sim `FAIL`, `ERROR`, or `TIMEOUT`: reject the candidate and feed the diagnostic back into the corresponding rewrite loop.
 
 ## Logs & metrics
 - Change size (lines/functions)

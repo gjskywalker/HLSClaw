@@ -17,7 +17,7 @@ It keeps reusable rewrite lessons compact by merging redundant content over time
 ### 1.1 Establish a Standard-Compliant, Bounds-Proven Baseline Before Pragmas
 
 - Rule: Begin with portable C/C++, explicit loop bounds, deterministic indexing, standard types, and no HLS pragmas. Prove all array accesses remain in bounds across edge cases before applying hardware directives or DSE.
-- Why: A clean software baseline isolates functional bugs from hardware optimization effects, improves fuzzing and validation reliability, and avoids undefined memory behavior that later appears as scheduling noise or pragma rejection.
+- Why: A clean software baseline isolates functional bugs from hardware optimization effects, improves C-sim validation reliability, and avoids undefined memory behavior that later appears as scheduling noise or pragma rejection.
 - Typical symptom:
   `Validation failures, candidate rejection before tuning, compiler auto-corrections, or persistent array index and bounds warnings such as HLS 214-167.`
 - Seen in:

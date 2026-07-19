@@ -10,7 +10,7 @@ skills, and two small motivation examples under `motivations/`.
 - `agent.py`, `langgraph_agent.py`, `config.py`: agent runtime, state machine, and
   provider configuration.
 - `skills/`: modular workflow stages for profiling, software rewrite,
-  CBMC-based equivalence checking, knowledge retrieval, pragma tuning, and
+  differential Vitis C-sim verification, knowledge retrieval, pragma tuning, and
   pragma DSE.
 - `motivations/atax/` and `motivations/conv2d/`: example kernels and Vitis HLS
   TCL scripts.
@@ -22,8 +22,8 @@ The full workflow expects:
 - Python 3.10 or newer.
 - Python packages: `requests`, `langgraph`, and optionally `google-genai` if
   using the Gemini provider.
-- Vitis HLS in `PATH` for profiling and pragma DSE stages.
-- CBMC in `PATH` for the software equivalence checking stage.
+- AMD Vitis HLS in `PATH` for profiling, differential C-sim verification, and
+  pragma DSE stages.
 - An API key for one supported LLM provider, supplied through environment
   variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
   `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, or `CUSTOM_API_KEY`.

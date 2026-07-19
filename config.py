@@ -12,6 +12,14 @@ _PRAGMA_DSE_BEAM_COOLING = float(os.getenv("PRAGMA_DSE_BEAM_COOLING", "0.85"))
 _PRAGMA_DSE_RANDOM_COMBO_FRACTION = float(os.getenv("PRAGMA_DSE_RANDOM_COMBO_FRACTION", "0.3"))
 _PRAGMA_DSE_CANDIDATE_TIMEOUT_SEC = int(os.getenv("PRAGMA_DSE_CANDIDATE_TIMEOUT_SEC", "0"))
 _MAX_HARDWARE_OPT_ROUNDS = int(os.getenv("MAX_HARDWARE_OPT_ROUNDS", "10"))
+_CSIM_VERIFICATION_CONFIG = {
+    "csim_equiv_trials": int(os.getenv("CSIM_EQUIV_TRIALS", "8")),
+    "csim_equiv_buf_size": int(os.getenv("CSIM_EQUIV_BUF_SIZE", "4096")),
+    "csim_equiv_seed": int(os.getenv("CSIM_EQUIV_SEED", "1")),
+    "csim_equiv_atol": float(os.getenv("CSIM_EQUIV_ATOL", "1e-5")),
+    "csim_equiv_rtol": float(os.getenv("CSIM_EQUIV_RTOL", "1e-5")),
+    "csim_equiv_timeout_sec": int(os.getenv("CSIM_EQUIV_TIMEOUT_SEC", "300")),
+}
 
 SYSTEM_PROMPT = (
     "You are an expert HLS assistant."
@@ -28,18 +36,18 @@ SYSTEM_PROMPT = (
     " and constraint conflicts."
     "\n"
     "Phase 3 — Software Rewrite (rewrite): produce one plain C/C++ optimization candidate per attempt that remains compatible"
-    " with CBMC/plain-C software equivalence checking; keep this stage free of HLS-only constructs."
+    " with AMD Vitis HLS C simulation; keep this stage free of HLS-only constructs."
     "\n"
-    "Phase 4 — Correctness Validation Loop (fuzzing): run CBMC-based software equivalence checking on the software rewrite variants;"
-    " only explicit FAIL should trigger another software rewrite attempt."
-    " Treat PASS / FAIL / TIMEOUT / ABORTED as distinct outcomes;"
-    " TIMEOUT or ABORTED are inconclusive-but-acceptable for pipeline progression, without falling back to concrete fuzzing."
+    "Phase 4 — Correctness Validation Loop (csim-verification): simulate Original C and rewritten C independently"
+    " with identical deterministic inputs in AMD Vitis HLS, then compare return values and array side effects."
+    " Only explicit PASS may advance the pipeline; FAIL, ERROR, or TIMEOUT must return to software rewrite."
     "\n"
-    "Phase 5 — Strategy Retrieval (kg-rag): query knowledge graph after the software/fuzzing loop using profiling summaries"
+    "Phase 5 — Strategy Retrieval (kg-rag): query knowledge graph after the software/C-sim loop using profiling summaries"
     " and the validated software design to obtain hardware-oriented optimization strategies with rationale/risks."
     "\n"
     "Phase 6 — Hardware Rewrite (rewrite): transform the validated software rewrite result into an HLS-oriented design;"
-    " HLS-only constructs are allowed here and this phase does not go through g++ fuzzing; this stage should emit the baseline HLS pragma combination directly and identify the most important pragma sites for later parameter tuning."
+    " HLS-only constructs are allowed here. Run the same Original-C-versus-rewrite Vitis C-sim check before pragma tuning;"
+    " this stage should emit the baseline HLS pragma combination directly and identify the most important pragma sites for later parameter tuning."
     " If hardware validation, pragma-tuning, or pragma-dse fails, return to kg-rag and iterate the hardware loop for a bounded number of rounds."
     "\n"
     "Phase 7 — Pragma Tuning (pragma-tuning): generate parameter-tuning candidates by adjusting existing pragmas in the hardware-oriented code variant."
@@ -112,6 +120,7 @@ OPENROUTER_CONFIG: dict[str, any] = {
     "pragma_dse_random_combo_fraction": _PRAGMA_DSE_RANDOM_COMBO_FRACTION,
     "pragma_dse_candidate_timeout_sec": _PRAGMA_DSE_CANDIDATE_TIMEOUT_SEC,
     "max_hardware_opt_rounds": _MAX_HARDWARE_OPT_ROUNDS,
+    **_CSIM_VERIFICATION_CONFIG,
 }
 
 OPENAI_CONFIG: dict[str, any] = {
@@ -143,6 +152,7 @@ OPENAI_CONFIG: dict[str, any] = {
     "pragma_dse_random_combo_fraction": _PRAGMA_DSE_RANDOM_COMBO_FRACTION,
     "pragma_dse_candidate_timeout_sec": _PRAGMA_DSE_CANDIDATE_TIMEOUT_SEC,
     "max_hardware_opt_rounds": _MAX_HARDWARE_OPT_ROUNDS,
+    **_CSIM_VERIFICATION_CONFIG,
 }
 
 DEEPSEEK_CONFIG: dict[str, any] = {
@@ -174,6 +184,7 @@ DEEPSEEK_CONFIG: dict[str, any] = {
     "pragma_dse_random_combo_fraction": _PRAGMA_DSE_RANDOM_COMBO_FRACTION,
     "pragma_dse_candidate_timeout_sec": _PRAGMA_DSE_CANDIDATE_TIMEOUT_SEC,
     "max_hardware_opt_rounds": _MAX_HARDWARE_OPT_ROUNDS,
+    **_CSIM_VERIFICATION_CONFIG,
 }
 
 CUSTOM_CONFIG: dict[str, any] = {
@@ -202,6 +213,7 @@ CUSTOM_CONFIG: dict[str, any] = {
     "pragma_dse_random_combo_fraction": _PRAGMA_DSE_RANDOM_COMBO_FRACTION,
     "pragma_dse_candidate_timeout_sec": _PRAGMA_DSE_CANDIDATE_TIMEOUT_SEC,
     "max_hardware_opt_rounds": _MAX_HARDWARE_OPT_ROUNDS,
+    **_CSIM_VERIFICATION_CONFIG,
 }
 
 GEMINI_CONFIG: dict[str, any] = {
@@ -230,6 +242,7 @@ GEMINI_CONFIG: dict[str, any] = {
     "pragma_dse_random_combo_fraction": _PRAGMA_DSE_RANDOM_COMBO_FRACTION,
     "pragma_dse_candidate_timeout_sec": _PRAGMA_DSE_CANDIDATE_TIMEOUT_SEC,
     "max_hardware_opt_rounds": _MAX_HARDWARE_OPT_ROUNDS,
+    **_CSIM_VERIFICATION_CONFIG,
 }
 
 
@@ -407,6 +420,7 @@ COPILOT_CONFIG: dict[str, any] = {
     "pragma_dse_random_combo_fraction": _PRAGMA_DSE_RANDOM_COMBO_FRACTION,
     "pragma_dse_candidate_timeout_sec": _PRAGMA_DSE_CANDIDATE_TIMEOUT_SEC,
     "max_hardware_opt_rounds": _MAX_HARDWARE_OPT_ROUNDS,
+    **_CSIM_VERIFICATION_CONFIG,
 }
 
 ANTHROPIC_CONFIG: dict[str, any] = {
@@ -438,6 +452,7 @@ ANTHROPIC_CONFIG: dict[str, any] = {
     "pragma_dse_random_combo_fraction": _PRAGMA_DSE_RANDOM_COMBO_FRACTION,
     "pragma_dse_candidate_timeout_sec": _PRAGMA_DSE_CANDIDATE_TIMEOUT_SEC,
     "max_hardware_opt_rounds": _MAX_HARDWARE_OPT_ROUNDS,
+    **_CSIM_VERIFICATION_CONFIG,
 }
 
 

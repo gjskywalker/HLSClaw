@@ -1611,8 +1611,8 @@ class LangGraphAgent(Agent):
         else:
             guidance_turn = self._resolved_best_software_turn(state)
             context = (
-                "This rewrite phase is analysis-only and targets the software rewrite/fuzzing loop only. "
-                "Do not emit <optimized_code> blocks. Focus on plain C/C++ transformations that remain CBMC/g++ fuzzable, "
+                "This rewrite phase is analysis-only and targets the software rewrite/C-sim verification loop only. "
+                "Do not emit <optimized_code> blocks. Focus on plain C/C++ transformations that remain compatible with AMD Vitis C-sim, "
                 "preserve the top-function signature, and avoid HLS-only constructs. Do not emit <command> blocks.\n\n"
                 + state.get("profiling_analysis", "")
                 + "\nCurrent software design:\n"
@@ -1716,7 +1716,7 @@ class LangGraphAgent(Agent):
         log_file = state["log_file"]
         skills = self._skills_from_state(state)
         profiling_analysis = state.get("profiling_analysis", "")
-        fuzz_skill_name = self._find_skill_name(skills, "fuzzing")
+        verification_skill_name = self._find_skill_name(skills, "csim-verification")
         rewrite_analysis = ""
         updates: dict[str, Any] = {}
         try:
@@ -1732,13 +1732,13 @@ class LangGraphAgent(Agent):
                 profiling_analysis=profiling_analysis,
                 rag_analysis="",
                 rewrite_analysis=rewrite_analysis,
-                fuzz_skill_name=fuzz_skill_name,
+                verification_skill_name=verification_skill_name,
             )
             self.optimized_code_turn = selected_software_turn
             selected_candidate = next((item for item in reversed(self.candidates) if item.turn == selected_software_turn), None)
-            summary = f"Selected software candidate v{selected_software_turn} after iterative software rewrite/fuzzing."
+            summary = f"Selected software candidate v{selected_software_turn} after iterative rewrite and Vitis C-sim verification."
             if selected_candidate is not None and selected_candidate.stage == "seed":
-                summary += " No fuzz-passing rewrite candidate was found, so the baseline software version was kept."
+                summary += " No C-sim-equivalent rewrite candidate was found, so the baseline software version was kept."
             stage_results = self._record_stage_success(
                 state,
                 "software_rewrite",
@@ -1800,7 +1800,7 @@ class LangGraphAgent(Agent):
                     state,
                     "hardware_rewrite",
                     {
-                        "analysis": "Hardware rewrite produced a structurally valid HLS-oriented variant.",
+                        "analysis": "Hardware rewrite produced a structurally valid, Vitis C-sim-equivalent HLS-oriented variant.",
                         "json_artifacts": [],
                         "command_result": "",
                     },
@@ -2165,7 +2165,7 @@ class LangGraphAgent(Agent):
                 "stage": final_candidate.stage,
                 "variant_kind": final_candidate.variant_kind,
                 "score": final_candidate.score,
-                "fuzz_pass": final_candidate.fuzz_pass,
+                "verification_pass": final_candidate.verification_pass,
                 "metrics": final_candidate.metrics,
                 "notes": final_candidate.notes,
             }
