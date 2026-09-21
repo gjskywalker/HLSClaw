@@ -61,29 +61,40 @@ def _normalize_api_base(provider: str, api_base: str) -> str:
     base = (api_base or "").strip().rstrip("/")
     if not base:
         return base
-    if provider in ("anthropic", "openai", "deepseek", "custom") and not base.endswith("/v1"):
+    if provider in ("anthropic", "openai", "deepseek", "factlab") and not base.endswith("/v1"):
         return base + "/v1"
     return base
 
 
-def _resolve_custom_api_base() -> str:
-    direct = os.getenv("CUSTOM_API_BASE", "").strip()
+def _resolve_factlab_api_base() -> str:
+    direct = os.getenv("FACTLAB_API_BASE", "").strip()
     if direct:
-        return _normalize_api_base("custom", direct)
-    return _normalize_api_base("custom", "")
+        return _normalize_api_base("factlab", direct)
+    openai_base = os.getenv("OPENAI_API_BASE", "").strip()
+    if "fact-lab.work" in openai_base:
+        return _normalize_api_base("factlab", openai_base)
+    return _normalize_api_base("factlab", "https://api.fact-lab.work/v1")
 
 
-def _resolve_custom_api_key() -> str:
-    direct = os.getenv("CUSTOM_API_KEY", "").strip()
+def _resolve_factlab_api_key() -> str:
+    direct = os.getenv("FACTLAB_API_KEY", "").strip()
     if direct:
         return direct
+    openai_base = os.getenv("OPENAI_API_BASE", "").strip()
+    if "fact-lab.work" in openai_base:
+        return os.getenv("OPENAI_API_KEY", "")
     return ""
 
 
-def _resolve_custom_model() -> str:
-    direct = os.getenv("CUSTOM_MODEL", "").strip()
+def _resolve_factlab_model() -> str:
+    direct = os.getenv("FACTLAB_MODEL", "").strip()
     if direct:
         return direct
+    openai_base = os.getenv("OPENAI_API_BASE", "").strip()
+    if "fact-lab.work" in openai_base:
+        model = os.getenv("OPENAI_MODEL", "").strip()
+        if model:
+            return model
     return "kimi-k2p5"
 
 
@@ -187,18 +198,18 @@ DEEPSEEK_CONFIG: dict[str, any] = {
     **_CSIM_VERIFICATION_CONFIG,
 }
 
-CUSTOM_CONFIG: dict[str, any] = {
-    "provider": "custom",
-    "api_key": _resolve_custom_api_key(),
-    "api_base": _resolve_custom_api_base(),
-    "model": _resolve_custom_model(),
-    "temperature": float(os.getenv("CUSTOM_TEMPERATURE", "0.7")),
-    "top_p": float(os.getenv("CUSTOM_TOP_P", "1.0")),
-    "max_tokens": int(os.getenv("CUSTOM_MAX_TOKENS", "16000")),
-    "timeout": int(os.getenv("CUSTOM_TIMEOUT", "300")),
-    "max_retries": int(os.getenv("CUSTOM_MAX_RETRIES", "3")),
-    "backoff": float(os.getenv("CUSTOM_BACKOFF", "2.0")),
-    "backoff_max": float(os.getenv("CUSTOM_BACKOFF_MAX", "60.0")),
+FACTLAB_CONFIG: dict[str, any] = {
+    "provider": "factlab",
+    "api_key": _resolve_factlab_api_key(),
+    "api_base": _resolve_factlab_api_base(),
+    "model": _resolve_factlab_model(),
+    "temperature": float(os.getenv("FACTLAB_TEMPERATURE", "0.7")),
+    "top_p": float(os.getenv("FACTLAB_TOP_P", "1.0")),
+    "max_tokens": int(os.getenv("FACTLAB_MAX_TOKENS", "16000")),
+    "timeout": int(os.getenv("FACTLAB_TIMEOUT", "300")),
+    "max_retries": int(os.getenv("FACTLAB_MAX_RETRIES", "3")),
+    "backoff": float(os.getenv("FACTLAB_BACKOFF", "2.0")),
+    "backoff_max": float(os.getenv("FACTLAB_BACKOFF_MAX", "60.0")),
     "transient_extra_retries": int(os.getenv("TRANSIENT_EXTRA_RETRIES", "6")),
     "transient_min_wait": float(os.getenv("TRANSIENT_MIN_WAIT", "3.0")),
     "command_timeout": int(os.getenv("COMMAND_TIMEOUT", "1800")),
@@ -471,13 +482,15 @@ def get_llm_config() -> dict[str, any]:
         return OPENAI_CONFIG
     if provider == "deepseek":
         return DEEPSEEK_CONFIG
-    if provider == "custom":
-        return CUSTOM_CONFIG
+    if provider == "factlab":
+        return FACTLAB_CONFIG
 
     if _resolve_gemini_api_key():
         return GEMINI_CONFIG
-    if os.getenv("CUSTOM_API_KEY"):
-        return CUSTOM_CONFIG
+    if os.getenv("FACTLAB_API_KEY"):
+        return FACTLAB_CONFIG
+    if "fact-lab.work" in os.getenv("OPENAI_API_BASE", "").strip():
+        return FACTLAB_CONFIG
     if os.getenv("OPENAI_API_KEY"):
         return OPENAI_CONFIG
     if os.getenv("DEEPSEEK_API_KEY"):

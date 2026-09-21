@@ -23,13 +23,36 @@ def _read_env_file(env_path: Path) -> dict[str, str]:
     return values
 
 
-def _resolve_key(local_env: dict[str, str]) -> str:
-    for key_name in ("OPENROUTER_API_KEY", "OPENAI_API_KEY"):
-        if os.getenv(key_name):
-            return os.getenv(key_name, "").strip()
-        if local_env.get(key_name):
-            return local_env[key_name].strip()
-    return ""
+def _resolve_endpoint(local_env: dict[str, str]) -> tuple[str, str, str]:
+    if os.getenv("RAG_API_KEY") or local_env.get("RAG_API_KEY"):
+        return (
+            (os.getenv("RAG_API_KEY") or local_env.get("RAG_API_KEY", "")).strip(),
+            (os.getenv("RAG_API_BASE") or local_env.get("RAG_API_BASE", "https://api.openai.com/v1")).strip(),
+            "openai",
+        )
+    for key_name, base_name, default_base, provider in (
+        ("OPENAI_API_KEY", "OPENAI_API_BASE", "https://api.openai.com/v1", "openai"),
+        ("OPENROUTER_API_KEY", "OPENROUTER_API_BASE", "https://openrouter.ai/api/v1", "openrouter"),
+    ):
+        key = (os.getenv(key_name) or local_env.get(key_name, "")).strip()
+        if key:
+            base_url = (os.getenv(base_name) or local_env.get(base_name, default_base)).strip()
+            return key, base_url, provider
+    return "", "", ""
+
+
+def _normalize_model_for_endpoint(model: str, provider: str) -> str:
+    if provider == "openai" and model.startswith("openai/"):
+        return model.split("/", 1)[1]
+    return model
+
+
+def _find_repo_root(start: Path) -> Path:
+    start_dir = start if start.is_dir() else start.parent
+    for candidate in (start_dir, *start_dir.parents):
+        if (candidate / "HLSClaw").is_dir() and (candidate / "RAG-Anything").is_dir():
+            return candidate
+    return Path(__file__).resolve().parents[4]
 
 
 def _load_content_list(path: Path, max_blocks: int) -> list[dict]:
@@ -45,8 +68,8 @@ def _load_content_list(path: Path, max_blocks: int) -> list[dict]:
 
 
 async def _run(args: argparse.Namespace) -> int:
-    repo_root = Path(__file__).resolve().parents[4]
-    hlsclaw_root = Path(__file__).resolve().parents[3]
+    repo_root = _find_repo_root(Path(__file__).resolve())
+    hlsclaw_root = repo_root / "HLSClaw"
     rag_anything_root = repo_root / "RAG-Anything"
     env_store = hlsclaw_root / ".llm_env"
     cache_path = Path(args.content_list).resolve()
@@ -57,10 +80,12 @@ async def _run(args: argparse.Namespace) -> int:
         return 2
 
     local_env = _read_env_file(env_store)
-    api_key = _resolve_key(local_env)
+    api_key, base_url, rag_provider = _resolve_endpoint(local_env)
     if not api_key:
         print("[ERROR] Missing API key. Set OPENROUTER_API_KEY or OPENAI_API_KEY.")
         return 2
+    llm_model = _normalize_model_for_endpoint(args.llm_model, rag_provider)
+    embed_model = _normalize_model_for_endpoint(args.embed_model, rag_provider)
 
     content_list = _load_content_list(cache_path, args.max_blocks)
     if not content_list:
@@ -75,11 +100,11 @@ async def _run(args: argparse.Namespace) -> int:
         working_dir=str(working_dir),
         parser="mineru",
         parse_method="auto",
-        llm_model=args.llm_model,
-        embed_model=args.embed_model,
+        llm_model=llm_model,
+        embed_model=embed_model,
         embedding_dim=args.embed_dim,
         api_key=api_key,
-        base_url=args.base_url,
+        base_url=base_url or args.base_url,
     )
     await rag.insert_content_list(
         content_list=content_list,

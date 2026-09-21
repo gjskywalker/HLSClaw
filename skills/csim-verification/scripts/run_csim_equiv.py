@@ -287,16 +287,25 @@ def _build_design_source(
         arguments.append(name)
         if _is_pointer_like(param):
             extent = _array_extent(param, defines, buf_size)
-            declarations.append(f"    {_base_type(param)} {name}[{extent}];")
-            if floating:
-                value = f"({_base_type(param)})(_csim_uniform() * 4.0 - 2.0)"
-            elif any(token in param["name"].lower() for token in ("addr", "idx", "index", "col")):
-                value = f"({_base_type(param)})(k % {max(1, min(extent, buf_size))})"
+            base_type = _base_type(param)
+            flat_name = f"flat_{index}"
+            if param["arrays"] and "[]" not in param["arrays"].replace(" ", ""):
+                declarations.append(f"    {base_type} {name}{param['arrays']};")
+                declarations.append(
+                    f"    {base_type} *{flat_name} = reinterpret_cast<{base_type} *>({name});"
+                )
             else:
-                value = f"({_base_type(param)})((long long)(_csim_uniform() * 17.0) - 8)"
-            initializers.append(f"    for (int k = 0; k < {extent}; ++k) {name}[k] = {value};")
+                declarations.append(f"    {base_type} {name}[{extent}];")
+                declarations.append(f"    {base_type} *{flat_name} = {name};")
+            if floating:
+                value = f"({base_type})(_csim_uniform() * 4.0 - 2.0)"
+            elif any(token in param["name"].lower() for token in ("addr", "idx", "index", "col")):
+                value = f"({base_type})(k % {max(1, min(extent, buf_size))})"
+            else:
+                value = f"({base_type})((long long)(_csim_uniform() * 17.0) - 8)"
+            initializers.append(f"    for (int k = 0; k < {extent}; ++k) {flat_name}[k] = {value};")
             fmt = "F %.17g" if floating else "I %lld"
-            cast = f"(double){name}[k]" if floating else f"(long long){name}[k]"
+            cast = f"(double){flat_name}[k]" if floating else f"(long long){flat_name}[k]"
             trace_lines.append(
                 f'    for (int k = 0; k < {extent}; ++k) std::fprintf(trace, "T %d A {index} %d {fmt}\\n", trial, k, {cast});'
             )

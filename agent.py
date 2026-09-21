@@ -1164,10 +1164,17 @@ class Agent:
 				self._append_text(log_file, f"[INFO] Loading reference file: {content}\n")
 				_log_debug(f"Loading reference: {content}")
 				try:
-					result = self._read_text(os.path.join(self.skills_dir, ref_skill_name, "references", content))
+					if str(content).lower().endswith(".pdf"):
+						result = f"[INFO] Binary PDF reference not inlined: {content}"
+					else:
+						ref_path = content if os.path.isabs(content) else os.path.join(self.skills_dir, ref_skill_name, "references", content)
+						result = self._read_text(ref_path)
 				except FileNotFoundError:
 					result = f"[WARN] Reference file not found: {content}"
 					self._append_text(log_file, f"[WARN] Reference file not found: {content}\n")
+				except UnicodeDecodeError:
+					result = f"[INFO] Binary or non-UTF-8 reference not inlined: {content}"
+					self._append_text(log_file, f"[INFO] Binary or non-UTF-8 reference not inlined: {content}\n")
 				reference_result += f"\n[REFERENCE FILE]: {content}\n[CONTENT]:\n{result}\n"
 				self._append_text(log_file, f"[DEBUG] reference turn {turn}: loaded {content}\n")
 			output["reference_result"] = reference_result
@@ -1357,16 +1364,20 @@ class Agent:
 
 	def _run_command(self, command: str) -> str:
 		"""Run a shell command in run_dir and return combined stdout/stderr output."""
-		forbidden = ["&&", "||", ";", "|", "`", "$(", ">", "<"]
-		if any(token in command for token in forbidden):
-			return f"[BLOCKED] Unsafe shell token found in command: {command}"
-
 		try:
 			argv = shlex.split(command)
 		except ValueError as exc:
-			return f"[BLOCKED] Failed to parse command: {exc}"
+			argv = self._recover_python_question_command(command)
+			if not argv:
+				return f"[BLOCKED] Failed to parse command: {exc}"
 		if not argv:
 			return "[BLOCKED] Empty command"
+		forbidden_tokens = {"&&", "||", ";", "|", ">", "<"}
+		# Commands are executed with shell=False, so punctuation inside a quoted
+		# argument is data. Block only standalone shell operators after shlex
+		# tokenization; RAG questions often contain code fragments with backticks.
+		if any(arg in forbidden_tokens for arg in argv):
+			return f"[BLOCKED] Unsafe shell token found in command: {command}"
 
 		allowed_bins = {"python", "python3", "clang++", "g++", "vitis-run"}
 		exe = os.path.basename(argv[0])
@@ -1391,6 +1402,27 @@ class Agent:
 			return f"[RETURN_CODE]={result.returncode}\n{result.stdout}"
 		except subprocess.TimeoutExpired:
 			return f"[RETURN_CODE]=-1\n[ERROR] Command timed out after {timeout}s: {command}"
+
+	def _recover_python_question_command(self, command: str) -> List[str]:
+		"""Recover python script commands whose final --question quote is missing."""
+		marker = " --question "
+		if marker not in command:
+			return []
+		prefix, question = command.split(marker, 1)
+		try:
+			argv = shlex.split(prefix)
+		except ValueError:
+			return []
+		if not argv:
+			return []
+		if os.path.basename(argv[0]) not in {"python", "python3"}:
+			return []
+		question = question.strip()
+		if len(question) >= 2 and question[0] == question[-1] and question[0] in {"'", '"'}:
+			question = question[1:-1]
+		elif question[:1] in {"'", '"'}:
+			question = question[1:]
+		return [*argv, "--question", question]
 	
 	#TODO: Currently only extract python commands, need to extend to other shell commands if needed.
 	def _extract_python_commands(self, script: str) -> list[str]:
@@ -2828,9 +2860,26 @@ class Agent:
 		}
 
 	def _find_skill_name(self, skills: List[SkillInfo], keyword: str) -> str:
-		kw = keyword.lower()
+		kw = keyword.lower().strip()
+		if not kw:
+			return ""
+		kw_tokens = [token for token in re.split(r"[^a-z0-9]+", kw) if token]
 		for skill in skills:
-			if kw in skill.name.lower():
+			if skill.name.lower() == kw:
+				return skill.name
+		for skill in skills:
+			name_lower = skill.name.lower().strip()
+			name_tokens = [token for token in re.split(r"[^a-z0-9]+", name_lower) if token]
+			if len(kw_tokens) == 1:
+				if kw_tokens[0] in name_tokens:
+					return skill.name
+				continue
+			for start in range(0, len(name_tokens) - len(kw_tokens) + 1):
+				if name_tokens[start : start + len(kw_tokens)] == kw_tokens:
+					return skill.name
+		for skill in skills:
+			name_lower = skill.name.lower().strip()
+			if len(kw) >= 4 and kw in name_lower:
 				return skill.name
 		return ""
 

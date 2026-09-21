@@ -20,9 +20,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-PROFILING_SCRIPTS = REPO_ROOT / "skills" / "profiling" / "scripts"
-PRAGMA_TUNING_SCRIPTS = REPO_ROOT / "skills" / "pragma-tuning" / "scripts"
+SKILLS_ROOT = Path(__file__).resolve().parents[2]
+PROFILING_SCRIPTS = SKILLS_ROOT / "profiling" / "scripts"
+PRAGMA_TUNING_SCRIPTS = SKILLS_ROOT / "pragma-tuning" / "scripts"
 if str(PROFILING_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(PROFILING_SCRIPTS))
 if str(PRAGMA_TUNING_SCRIPTS) not in sys.path:

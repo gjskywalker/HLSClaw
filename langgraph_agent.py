@@ -188,6 +188,7 @@ class LangGraphAgent(Agent):
             self._route_after_hardware_rewrite,
             {
                 "kg_rag": "kg_rag",
+                "hardware_rewrite": "hardware_rewrite",
                 "pragma_tuning": "pragma_tuning",
                 "pragma_dse": "pragma_dse",
                 "finalize": "finalize",
@@ -198,6 +199,7 @@ class LangGraphAgent(Agent):
             self._route_after_pragma_tuning,
             {
                 "kg_rag": "kg_rag",
+                "hardware_rewrite": "hardware_rewrite",
                 "pragma_dse": "pragma_dse",
                 "finalize": "finalize",
             },
@@ -207,6 +209,7 @@ class LangGraphAgent(Agent):
             self._route_after_pragma_dse,
             {
                 "kg_rag": "kg_rag",
+                "hardware_rewrite": "hardware_rewrite",
                 "finalize": "finalize",
             },
         )
@@ -2182,17 +2185,20 @@ class LangGraphAgent(Agent):
             candidates_path=str(state.get("best_pragma_candidates_path", "")).strip(),
         )
         self.scratchpad.stage_artifacts.update(results_artifacts)
-        try:
-            rewrite_artifacts = self._update_rewrite_skill_from_run(
-                design_name=state.get("design_name", ""),
-                run_dir=run_dir,
-                final_summary=summary,
-                log_file=log_file,
-            )
-            self.scratchpad.stage_artifacts.update(rewrite_artifacts)
-        except Exception as exc:
-            self._append_text(log_file, f"[WARN] Failed to update rewrite skill lessons automatically: {exc}\n")
-            _log_warn(f"Failed to update rewrite skill lessons automatically: {exc}")
+        if os.getenv("HLSCLAW_SKIP_REWRITE_LESSONS", "").strip() == "1":
+            self._append_text(log_file, "[INFO] Skipped rewrite skill lesson update by environment.\n")
+        else:
+            try:
+                rewrite_artifacts = self._update_rewrite_skill_from_run(
+                    design_name=state.get("design_name", ""),
+                    run_dir=run_dir,
+                    final_summary=summary,
+                    log_file=log_file,
+                )
+                self.scratchpad.stage_artifacts.update(rewrite_artifacts)
+            except Exception as exc:
+                self._append_text(log_file, f"[WARN] Failed to update rewrite skill lessons automatically: {exc}\n")
+                _log_warn(f"Failed to update rewrite skill lessons automatically: {exc}")
         final_state_path = os.path.join(run_dir, "langgraph_state.json")
         self.scratchpad.stage_artifacts["langgraph_state"] = final_state_path
         summary["stage_artifacts"] = dict(self.scratchpad.stage_artifacts)

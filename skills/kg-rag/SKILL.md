@@ -11,6 +11,7 @@ Use this skill when you need retrieval-grounded guidance from the Vitis HLS user
 ## Inputs
 - Current design summary and bottlenecks from scratchpad
 - Query focus (timing, II, latency, memory, dataflow, pragma tradeoffs)
+- Shared source PDF: `/home/eeuser/Desktop/LLM4PragmaDSE/vitis-user-guide.pdf`
 
 ## Outputs
 - RAG library under `HLSClaw/kg-lib`
@@ -21,6 +22,8 @@ Use this skill when you need retrieval-grounded guidance from the Vitis HLS user
 ```bash
 python <Skill_Script_absolute_Path>/build_vitis_rag.py
 ```
+By default, this uses the repository-level guide at `/home/eeuser/Desktop/LLM4PragmaDSE/vitis-user-guide.pdf`.
+
 For quick validation under rate/latency limits:
 ```bash
 python <Skill_Script_absolute_Path>/build_vitis_rag.py --prefer-cache --max-blocks 300

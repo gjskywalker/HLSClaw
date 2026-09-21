@@ -41,7 +41,9 @@ _PROVIDER_ALIASES = {
     "google-genai": "gemini",
     "deepseek": "deepseek",
     "ds": "deepseek",
-    "custom": "custom",
+    "factlab": "factlab",
+    "fact-lab": "factlab",
+    "qwen": "factlab",
     "openrouter": "openrouter",
     "openai": "openai",
     "chatgpt": "openai",
@@ -103,7 +105,7 @@ _MODEL_PRESETS = {
         "deepseek-chat",
         "deepseek-reasoner",
     ],
-    "custom": [
+    "factlab": [
         "deepseek-v3.2",
         "glm47",
         "minimax-m25",
@@ -121,7 +123,7 @@ _MODEL_ENV = {
     "openrouter": "OPENROUTER_MODEL",
     "openai": "OPENAI_MODEL",
     "deepseek": "DEEPSEEK_MODEL",
-    "custom": "CUSTOM_MODEL",
+    "factlab": "FACTLAB_MODEL",
 }
 
 _INPUT_MODE_ALIASES = {
@@ -149,7 +151,7 @@ _KEY_ENV = {
     "openrouter": "OPENROUTER_API_KEY",
     "openai": "OPENAI_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
-    "custom": "CUSTOM_API_KEY",
+    "factlab": "FACTLAB_API_KEY",
 }
 
 _COLOR_ENABLED = os.isatty(1) and os.getenv("NO_COLOR") is None
@@ -432,8 +434,10 @@ def _fallback_provider_from_env() -> str:
         return "copilot"
     if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
         return "gemini"
-    if os.getenv("CUSTOM_API_KEY"):
-        return "custom"
+    if os.getenv("FACTLAB_API_KEY"):
+        return "factlab"
+    if "fact-lab.work" in (os.getenv("OPENAI_API_BASE", "").strip()):
+        return "factlab"
     if os.getenv("OPENAI_API_KEY"):
         return "openai"
     if os.getenv("DEEPSEEK_API_KEY"):
@@ -449,7 +453,7 @@ def _prompt_provider(default_provider: str) -> str:
         ("💠 gemini (google)", "gemini"),
         ("🤖 chatgpt (openai)", "openai"),
         ("🟦 deepseek", "deepseek"),
-        ("🧪 custom", "custom"),
+        ("🧪 factlab", "factlab"),
         ("🧠 claude (anthropic)", "anthropic"),
         ("🌐 openrouter", "openrouter"),
     ]
@@ -851,7 +855,7 @@ def _fetch_dynamic_models(provider: str) -> list[str]:
         "openrouter": ("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
         "openai": ("OPENAI_API_BASE", "https://api.openai.com/v1"),
         "deepseek": ("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
-        "custom": ("CUSTOM_API_BASE", ""),
+        "factlab": ("FACTLAB_API_BASE", "https://api.fact-lab.work/v1"),
     }
     key_env = {
         "copilot": ("COPILOT_API_KEY", "GITHUB_TOKEN", "GH_TOKEN"),
@@ -860,7 +864,7 @@ def _fetch_dynamic_models(provider: str) -> list[str]:
         "openrouter": ("OPENROUTER_API_KEY",),
         "openai": ("OPENAI_API_KEY",),
         "deepseek": ("DEEPSEEK_API_KEY",),
-        "custom": ("CUSTOM_API_KEY",),
+        "factlab": ("FACTLAB_API_KEY",),
     }
     api_base_key, api_base_default = api_base_env.get(provider, ("", ""))
     if not api_base_key:
@@ -893,6 +897,10 @@ def _fetch_dynamic_models(provider: str) -> list[str]:
             return sorted(set(models))
         except Exception:
             return []
+    if provider == "factlab" and api_base == api_base_default:
+        openai_base = os.getenv("OPENAI_API_BASE", "").strip().rstrip("/")
+        if "fact-lab.work" in openai_base:
+            api_base = openai_base
     if provider in ("anthropic", "deepseek") and not api_base.endswith("/v1"):
         api_base = api_base + "/v1"
 
@@ -901,6 +909,10 @@ def _fetch_dynamic_models(provider: str) -> list[str]:
         token = os.getenv(env_name, "")
         if token:
             break
+    if (not token) and provider == "factlab":
+        openai_base = os.getenv("OPENAI_API_BASE", "").strip()
+        if "fact-lab.work" in openai_base:
+            token = os.getenv("OPENAI_API_KEY", "")
     if (not token) and provider == "copilot":
         # Use the device flow token from config.py
         try:
@@ -1000,7 +1012,7 @@ def _prompt_model(provider: str, default_model: str) -> str:
             default_index = i
             break
 
-    icon = {"copilot": "🐙", "openai": "🤖", "deepseek": "🟦", "custom": "🧪", "anthropic": "🧠", "openrouter": "🌐"}.get(provider, "•")
+    icon = {"copilot": "🐙", "openai": "🤖", "deepseek": "🟦", "factlab": "🧪", "anthropic": "🧠", "openrouter": "🌐"}.get(provider, "•")
     if provider == "gemini":
         icon = "💠"
     selected = _interactive_select(
@@ -1022,6 +1034,16 @@ def _ensure_api_key(provider: str) -> None:
     env_key = _KEY_ENV[provider]
     if os.getenv(env_key):
         return
+    if provider == "factlab":
+        openai_base = os.getenv("OPENAI_API_BASE", "").strip()
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if "fact-lab.work" in openai_base and openai_key:
+            os.environ["FACTLAB_API_KEY"] = openai_key
+            if openai_base and not os.getenv("FACTLAB_API_BASE"):
+                os.environ["FACTLAB_API_BASE"] = openai_base
+                _persist_env_var("FACTLAB_API_BASE", openai_base)
+            _persist_env_var("FACTLAB_API_KEY", openai_key)
+            return
     if provider == "gemini":
         google_key = os.getenv("GOOGLE_API_KEY", "").strip()
         if google_key:
@@ -1048,13 +1070,17 @@ def _configure_provider(provider: str) -> None:
         _ensure_copilot_auth()
     elif provider == "openai":
         _ensure_openai_auth()
-    elif provider in ("gemini", "anthropic", "openrouter", "deepseek", "custom"):
+    elif provider in ("gemini", "anthropic", "openrouter", "deepseek", "factlab"):
         _ensure_api_key(provider)
 
     model_env_key = _MODEL_ENV[provider]
     stored_model = (os.getenv(model_env_key) or "").strip()
+    if provider == "factlab" and not stored_model:
+        openai_base = os.getenv("OPENAI_API_BASE", "").strip()
+        if "fact-lab.work" in openai_base:
+            stored_model = (os.getenv("OPENAI_MODEL") or "").strip()
     if (not stored_model) or stored_model.lower() == "custom":
-        stored_model = "kimi-k2p5" if provider == "custom" else _MODEL_PRESETS[provider][0]
+        stored_model = "kimi-k2p5" if provider == "factlab" else _MODEL_PRESETS[provider][0]
     default_model = stored_model
     selected_model = _prompt_model(provider, default_model)
 
@@ -1316,7 +1342,7 @@ def main() -> None:
         dest="provider",
         type=str,
         required=False,
-        choices=["copilot", "gemini", "google", "claude", "claude-code", "anthropic", "openrouter", "openai", "chatgpt", "deepseek", "ds", "custom"],
+        choices=["copilot", "gemini", "google", "claude", "claude-code", "anthropic", "openrouter", "openai", "chatgpt", "deepseek", "ds", "factlab", "qwen"],
         help="LLM provider override. If omitted, use interactive provider selection.",
     )
     parser.add_argument(
